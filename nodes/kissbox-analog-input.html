@@ -1,0 +1,63 @@
+<script type="text/javascript">
+    RED.nodes.registerType('kissbox-analog-input', {
+        category: 'Kissbox',
+        color: '#F00012',
+        inputs: 1,
+        outputs: 8,
+        defaults: {
+            hub: { value: "", type: "kissbox-hub" },
+            name: {value: ""},
+            topic: {value: ""},
+            slot: {value: "number", required:true}
+        },
+        icon: "kissbox.png",
+        label: function () {
+            return (this.name || "AI8RA")+ ". slot:"+this.slot;
+        },
+        paletteLabel: "Analog input"
+    })
+</script>
+
+<script type="text/html" data-template-name="kissbox-analog-input">
+    <div class="form-row">
+        <label for="node-input-hub"><i class="fa fa-tag"></i> Hub</label>
+        <input type="text" id="node-input-hub" placeholder="Hub">
+    </div>
+    <div class="form-row">
+        <label for="node-input-name"><i class="icon-tag"></i> name</label>
+        <input type="text" id="node-input-name" placeholder="name">
+    </div>
+    <div class="form-row">
+        <label for="node-input-topic"><i class="icon-tag"></i> topic</label>
+        <input type="text" id="node-input-topic" placeholder="topic">
+    </div>
+    <div class="form-row">
+        <label for="node-input-slot"><i class="fa fa-empire"></i> Slot</span></label>
+        <select id="node-input-slot" style="width:125px !important">
+            <option value="0">0</option>
+            <option value="1">1</option>
+            <option value="2">2</option>
+            <option value="3">3</option>
+            <option value="4">4</option>
+            <option value="5">5</option>
+            <option value="6">6</option>
+            <option value="7">7</option>
+        </select>
+</script>
+
+<script type="text/html" data-help-name="kissbox-analog-input">
+    <h3>Receives status of analog inputs of a DI8DC card</h3>
+    <p>in the configuraton the slotnumber has to be filled in this is the slotnumber where the card is plugged in the IO3 or IO8 </p>
+    <p>Kissbox slotnumbers are zero based and you cant use slot 4..7 if you have a IO3 !</p><br>
+    <p>Status of one or all analog inputs can be polled by sending a payload message</p>
+    <p>Following commands are available:</p>
+    <ul>
+      <li><code>msg.payload.readinput</code>  </li>
+      <p>Inputs are in Json format the key "number" states the input number of 1..8</p>
+      <p>if "all" is used as the value at the key "number" it reads the status of all contacts</p>
+      <br>
+      <p>example payload = {"readinput":{"number": 3}} reads the value of input 3 {"readinput":{"number":"all"}} reads all the inputs </p>  
+
+     </ul>
+    <p>ingtvis</p>
+</script>
