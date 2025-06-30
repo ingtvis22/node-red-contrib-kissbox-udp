@@ -1,5 +1,7 @@
 # Kissbox nodes listening to UDP for Node-RED
 
+!!!!!!! STILL UNDER DEVELOPMENT !!!!!!!
+
 https://kiss-box.nl/
 THE NETWORK ANSWER
 Audiences are ever more expecting to be amazed. Designers and technicians working in the entertainment industry, theme-parks, museums, live shows, movies and many other types of venues need solutions that enable them to create and control complex networks. At lowest-as-possible-cost and with highest-as-possible reliability.
