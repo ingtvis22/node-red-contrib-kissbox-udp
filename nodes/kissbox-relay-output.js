@@ -1,130 +1,155 @@
 module.exports = function (RED) {
 
+    // sn = slotnummer
+    // cn = channelnummer
+    // cv = channel value
+
+    // A5 write one channel             sn cn cv
+    // A4 write all channels            sn cv cv cv cv cv cv cv cv
+    // A0 read all channels             sn
+    // A2 read one channel              sn cn
+    // A3 read one channel response     sn cn cv
+    // A1 read all channels response    sn cv cv cv cv cv cv cv cv
+
     var dgram = require('dgram');
     var udpClient = null;
 
     function UdpListenerNode(config) {
         RED.nodes.createNode(this, config);
-        this.slot = config.slot;
+        this.slot = parseInt(config.slot, 10);
         this.topic = config.topic;
-        var slot = config.slot;
-        var topic = config.topic;
+        var slot = this.slot;
+        var topic = this.topic;
         var node = this;
+        var slothex = slot & 0xFF;
 
         udpClient = dgram.createSocket({ type: 'udp4', reuseAddr: true });
 
-        node.on("input", function(msg) {
-
-            // if (msg.hasOwnProperty("readrelay")){
-            //     console.log(msg.payload.readrelay.number)
-            // }
-
-            if (msg.payload.hasOwnProperty("readrelay")) { 
+        node.on('input', function(msg) {
+            if (msg.payload && msg.payload.hasOwnProperty('readrelay')) {
                 var number = msg.payload.readrelay.number;
-                console.log(msg.payload.readrelay.number);
-
-                if (number >= 0 && number <= 3) {
-                    var command = "$A2$0"+ slot +"$0"+ number ;
-                    UdpSender(command);
-                }else if (number == "all") { 
-                    var command = "$A0$0"+slot;
-                    UdpSender(command);
-                }else{
-                    node.error("value not correct")
+                if (number === 'all') {
+                    var buffer = Buffer.from([0xA0, slothex]);
+                    UdpSender(buffer);
+                } else {
+                    var idx = parseInt(number, 10);
+                    if (!Number.isNaN(idx) && idx >= 0 && idx <= 3) {
+                        var buffer = Buffer.from([0xA2, slothex, idx]);
+                        UdpSender(buffer);
+                    } else {
+                        node.error('value not correct');
+                    }
                 }
             }
-            if (msg.payload.hasOwnProperty("setrelay")) { 
-                var number = msg.payload.setrelay.number;
+
+            if (msg.payload && msg.payload.hasOwnProperty('setrelay')) {
+                var relayNumber = msg.payload.setrelay.number;
                 var relayValue = msg.payload.setrelay.value;
-                console.log(msg.payload.setrelay.number+" : "+msg.payload.setrelay.value);
-
-                if (number == "all"){
-                    if (Array.isArray(relayValue) == true) { 
-                        var command = "$A4$0"+slot+ setRelayValue(relayValue[0])+setRelayValue(relayValue[1])+setRelayValue(relayValue[2])+setRelayValue(relayValue[3]);
-
-                        UdpSender(command);
-                        // small delay else read command exeeds send command
-                        setTimeout(function() { sendUdp("$A1$0"+slot); }, 6);
-
+                if (relayNumber === 'all') {
+                    if (Array.isArray(relayValue) && relayValue.length === 4) {
+                        var values = [
+                            setOutputValue(relayValue[0]),
+                            setOutputValue(relayValue[1]),
+                            setOutputValue(relayValue[2]),
+                            setOutputValue(relayValue[3])
+                        ];
+                        var buffer = Buffer.from([0xA4, slothex].concat(values));
+                        UdpSender(buffer);
+                        setTimeout(function() { 
+                            sendUdp(Buffer.from([0xA1, slothex]));
+                            setTimeout(function() { if (node.hub && node.hub.sendReadAll) node.hub.sendReadAll(); }, 20);
+                        }, 6);
                         function sendUdp(value) {
                             UdpSender(value);
                         }
-
-                    }else{    
-                        node.error("value not correct"+msg['setrelay'][key])
+                    } else {
+                        node.error('value not correct: ' + relayValue);
                     }
-                }else if (number >= 1 && number <= 4) {
-                        var KBrelayValue = setRelayValue(relayValue)
-                        var command = "$A5$0"+ slot +"$0"+(number-1)+KBrelayValue ;
-
+                } else {
+                    var idx = parseInt(relayNumber, 10);
+                    if (!Number.isNaN(idx) && idx >= 1 && idx <= 4) {
+                        var command = Buffer.from([0xA5, slothex, idx - 1, setOutputValue(relayValue)]);
+                        console.log(command);
                         UdpSender(command);
-                        // small delay else read command exeeds send command
-                        setTimeout(function() { sendUdp("$A1$0"+slot); }, 6);
-
+                        setTimeout(function() { 
+                            sendUdp(Buffer.from([0xA2, slothex, idx - 1]));
+                        }, 6);
                         function sendUdp(value) {
                             UdpSender(value);
                         }
-
-                    }else{    
-                        node.error("value not correct"+msg['setrelay'][key])
+                    } else {
+                        node.error('value not correct: ' + relayValue);
                     }
+                }
             }
         });
 
         function setOutputValue(value) {
-            if (value == "on" || value == 1 || value == true) {
-                return "$01"
-            }else if (value == "off" || value == 0 || value == false) {
-                return "$00"
-            }else {
-                node.error("value not correct"+value)
-            }
-        }    
-
-        function UdpSender(command) {
-            udpClient.send(command /*+ "\r"*/ ,node.hub.portout,'localhost',function(error){
-                if(error){
-                    client.close();
-                }else{
-                    console.log(command + ' sent');
+            if (typeof value === 'number') {
+                if (value >= 0 && value <= 255) {
+                    return value;
                 }
-            }); 
+            }
+            if (typeof value === 'string') {
+                if (value === 'on') return 0x01;
+                if (value === 'off') return 0x00;
+                if (value === 'toggle') return 0xFF;
+                if (value === 'pulse') return 0xFE;
+                var parsed = parseInt(value, 10);
+                if (!Number.isNaN(parsed) && parsed >= 0 && parsed <= 255) {
+                    return parsed;
+                }
+            }
+            if (value === true) return 0x01;
+            if (value === false) return 0x00;
+            node.error('value not correct: ' + value);
+            return 0x00;
         }
 
-        // Retrieve the hub node
-        node.hub = RED.nodes.getNode(config.hub);
+        function UdpSender(command) {
+            if (!Buffer.isBuffer(command)) {
+                command = Buffer.from(command);
+            }
+            udpClient.send(command, node.hub.portout, node.hub.targetHost, function(error) {
+            // udpClient.send(command, node.hub.portout, 'localhost', function(error) {
+                if (error) {
+                    udpClient.close();
+                } else {
+                    console.log(command + ' sent');
+                }
+            });
+        }
 
-        node.hub.on("status", function (status) {
+        node.hub = RED.nodes.getNode(config.hub);
+        if (!node.hub) {
+            node.status({ fill: 'red', shape: 'ring', text: 'missing hub config' });
+            node.error('Missing hub configuration');
+            return;
+        }
+
+        node.hub.on('status', function (status) {
             node.status(status);
         });
-        // de evt-precip varvangen voor kissbox idetifier
-        node.hub.on("evt_input", function (data) {
+
+        node.hub.on('evt_input', function (data) {
             try {
                 var outputMsgs = [];
-                //console.log(data.payload)
-                const message = data.payload.split("$")
-                if (parseInt(message[2].trim()) == slot) {     // straks vergelijken met het slotnummer wat is ingevuld in het dashbord
-                    if (message[1].trim() == "A1") {
-                        //console.log("all channels");
-                        for(let i = 0; i <= 3; i++) {
-                            outputMsgs[i] = {payload: Boolean(parseInt(message[i+3])), topic: topic}
-                        }    
-                    } else if (message[1] == "A3 ") {
-                        //console.log("one channel");
-                        outputMsgs[parseInt(message[3])] = {payload: Boolean(parseInt(message[4])), topic: topic}
+                var payload = data.payload;
+                if (payload && payload.slot === slot) {
+                    if (payload.type === 'A1') {
+                        for (let i = 0; i < payload.values.length; i++) {
+                            outputMsgs[i] = { payload: Boolean(payload.values[i]), topic: topic };
+                        }
+                    } else if (payload.type === 'A3') {
+                        outputMsgs[payload.channel] = { payload: Boolean(payload.value), topic: topic };
                     }
-             
-                    var msg = {
-                        payload: data.payload
-                    };
-              
-                } 
+                }
                 node.send(outputMsgs);
-            }   catch (error) {
+            } catch (error) {
                 node.error(error, data);
             }
         });
     }
 
-    RED.nodes.registerType("kissbox-relay-output", UdpListenerNode);
+    RED.nodes.registerType('kissbox-relay-output', UdpListenerNode);
 }

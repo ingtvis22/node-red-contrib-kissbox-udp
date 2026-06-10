@@ -5,123 +5,128 @@ module.exports = function (RED) {
 
     function UdpListenerNode(config) {
         RED.nodes.createNode(this, config);
-        this.slot = config.slot;
+        this.slot = parseInt(config.slot, 10);
         this.topic = config.topic;
-        var slot = config.slot;
-        var topic = config.topic;
+        var slot = this.slot;
+        var topic = this.topic;
         var node = this;
+        var slothex = slot & 0xFF;
 
         udpClient = dgram.createSocket({ type: 'udp4', reuseAddr: true });
 
-        node.on("input", function(msg) {
-            // send command read outputs
-            if (msg.payload.hasOwnProperty("readoutput")) { 
-                var number = msg.payload.readoutput.number
-                if (number >= 0 && number <= 7) {
-                    var command = "$A2$0"+ slot +"$0"+ number ;
-                    UdpSender(command);
-                }else if (number == "all") { 
-                    var command = "$A0$0"+slot;
-                    UdpSender(command);
-                }else{
-                    node.error("value not correct")
+        node.on('input', function(msg) {
+            if (msg.payload && msg.payload.hasOwnProperty('readoutput')) {
+                var number = msg.payload.readoutput.number;
+                if (number === 'all') {
+                    var buffer = Buffer.from([0xA0, slothex]);
+                    UdpSender(buffer);
+                } else {
+                    var channel = parseInt(number, 10);
+                    if (!Number.isNaN(channel) && channel >= 0 && channel <= 7) {
+                        var buffer = Buffer.from([0xA2, slothex, channel]);
+                        UdpSender(buffer);
+                    } else {
+                        node.error('value not correct');
+                    }
                 }
             }
-            if (msg.payload.hasOwnProperty("setoutput")) { 
-                var number = msg.payload.setoutput.number
-                var value = msg.payload.setoutput.value
-                if (number == "all"){
-                    if (Array.isArray(value) == true) { 
-                        var command = "$A4$0"+slot+ setOutputValue(value[0])+setOutputValue(value[1])+setOutputValue(value[2])+setOutputValue(value[3])+setOutputValue(value[4])+setOutputValue(value[5])+setOutputValue(value[6])+setOutputValue(value[7]);
-
-                        UdpSender(command);
-                        // small delay else read command exeeds send command
-                        setTimeout(function() { sendUdp("$A1$0"+slot); }, 6);
-
+            if (msg.payload && msg.payload.hasOwnProperty('setoutput')) {
+                var number = msg.payload.setoutput.number;
+                var value = msg.payload.setoutput.value;
+                if (number === 'all') {
+                    if (Array.isArray(value) && value.length === 8) {
+                        var values = value.map(setOutputValue);
+                        var buffer = Buffer.from([0xA4, slothex].concat(values));
+                        UdpSender(buffer);
+                        setTimeout(function() { sendUdp(Buffer.from([0xA1, slothex])); }, 6);
                         function sendUdp(value) {
                             UdpSender(value);
                         }
-
-                    }else{    
-                        node.error("value not correct"+value)
+                    } else {
+                        node.error('value not correct: ' + value);
                     }
-                }else if (number >= 1 && number <= 8) {
-                        var outputValue = setOutputValue(value)
-                        console.log(outputValue+" : "+value)
-                        var command = "$A5$0"+ slot +"$0"+(number-1)+outputValue ;
-
-                        UdpSender(command);
-                        // small delay else read command exeeds send command
-                        setTimeout(function() { sendUdp("$A1$0"+slot); }, 6);
-
+                } else {
+                    var channel = parseInt(number, 10);
+                    if (!Number.isNaN(channel) && channel >= 1 && channel <= 8) {
+                        var outputValue = setOutputValue(value);
+                        var buffer = Buffer.from([0xA5, slothex, channel - 1, outputValue]);
+                        UdpSender(buffer);
+                        setTimeout(function() { 
+                            sendUdp(Buffer.from([0xA2, slothex, channel - 1]));
+                        }, 6);
                         function sendUdp(value) {
                             UdpSender(value);
                         }
-
-                    }else{    
-                        node.error("value not correct"+value)
+                    } else {
+                        node.error('value not correct: ' + value);
                     }
+                }
             }
         });
 
-        function setOutputValue(decimalNumber) {
-            if (decimalNumber >= 0 && decimalNumber <= 255) {
-                var hexNumber = decimalNumber.toString(16); // value tohex
-                if (decimalNumber > 15) {
-                    return "$"+hexNumber; 
-                }else{
-                    return "$0"+hexNumber; 
+        function setOutputValue(value) {
+            if (typeof value === 'number') {
+                if (value >= 0 && value <= 255) {
+                    return value;
                 }
-        
-            }else {
-                node.error("value not correct"+decimalNumber)
             }
+            if (typeof value === 'string') {
+                if (value === 'off') return 0x00;
+                if (value === 'on') return 0xFF;
+                var parsed = parseInt(value, 10);
+                if (!Number.isNaN(parsed) && parsed >= 0 && parsed <= 255) {
+                    return parsed;
+                }
+            }
+            if (value === true) return 0xFF;
+            if (value === false) return 0x00;
+            node.error('value not correct: ' + value);
+            return 0x00;
         }
 
         function UdpSender(command) {
-            udpClient.send(command /*+ "\r"*/ ,node.hub.portout,'localhost',function(error){
-                if(error){
-                    client.close();
-                }else{
+            if (!Buffer.isBuffer(command)) {
+                command = Buffer.from(command);
+            }
+            udpClient.send(command, node.hub.portout, 'localhost', function(error) {
+                if (error) {
+                    udpClient.close();
+                } else {
                     console.log(command + ' sent');
                 }
-            }); 
+            });
         }
 
-        // Retrieve the hub node
         node.hub = RED.nodes.getNode(config.hub);
+        if (!node.hub) {
+            node.status({ fill: 'red', shape: 'ring', text: 'missing hub config' });
+            node.error('Missing hub configuration');
+            return;
+        }
 
-        node.hub.on("status", function (status) {
+        node.hub.on('status', function (status) {
             node.status(status);
         });
-        // de evt-precip varvangen voor kissbox idetifier
-        node.hub.on("evt_input", function (data) {
+
+        node.hub.on('evt_input', function (data) {
             try {
                 var outputMsgs = [];
-                //console.log(data.payload)
-                const message = data.payload.split("$")
-                if (parseInt(message[2].trim()) == slot) {     // straks vergelijken met het slotnummer wat is ingevuld in het dashbord
-                    if (message[1].trim() == "A1") {
-                        //console.log("all channels");
-                        for(let i = 0; i <= 7; i++) {
-                            outputMsgs[i] = {payload: (parseInt(message[i+3],16)), topic: topic}
-                        }    
-                    } else if (message[1] == "A3 ") {
-                        //console.log("one channel");
-                        outputMsgs[parseInt(message[3])] = {payload: (parseInt(message[4],16)), topic: topic}
+                var payload = data.payload;
+                if (payload && payload.slot === slot) {
+                    if (payload.type === 'A1') {
+                        for (let i = 0; i < payload.values.length; i++) {
+                            outputMsgs[i] = { payload: payload.values[i], topic: topic };
+                        }
+                    } else if (payload.type === 'A3') {
+                        outputMsgs[payload.channel] = { payload: payload.value, topic: topic };
                     }
-             
-                    var msg = {
-                        payload: data.payload
-                    };
-              
-                } 
+                }
                 node.send(outputMsgs);
-            }   catch (error) {
+            } catch (error) {
                 node.error(error, data);
             }
         });
     }
 
-    RED.nodes.registerType("kissbox-analog-output", UdpListenerNode);
+    RED.nodes.registerType('kissbox-analog-output', UdpListenerNode);
 }

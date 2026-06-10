@@ -1,3 +1,15 @@
+   // sn = slotnummer
+    // cn = channelnummer
+    // cv = channel value
+
+    // A5 write one channel             sn cn cv
+    // A4 write all channels            sn cv cv cv cv cv cv cv cv
+    // A0 read all channels             sn
+    // A2 read one channel              sn cn
+    // A3 read one channel response     sn cn cv
+    // A1 read all channels response    sn cv cv cv cv cv cv cv cv
+
+
 module.exports = function (RED) {
 
     var dgram = require('dgram');
@@ -5,28 +17,30 @@ module.exports = function (RED) {
 
     function UdpListenerNode(config) {
         RED.nodes.createNode(this, config);
-        this.slot = config.slot;
+        this.slot = parseInt(config.slot, 10);
         this.topic = config.topic;
-        var slot = config.slot;
+        var slot = parseInt(config.slot, 10);
         var topic = config.topic;
         var node = this;
+
+        var slothex = slot.toString(16).padStart(2, '0').toUpperCase();
+        slothex = parseInt(slothex, 16);
 
         udpClient = dgram.createSocket({ type: 'udp4', reuseAddr: true });
 
         node.on("input", function(msg) {
-            // if (msg.hasOwnProperty("readinput")) { 
-            //     var command = "$A0$0"+slot;
-            //     UdpSender(command);
-            // }
+
             if (msg.payload.hasOwnProperty("readinput")) { 
-                var input = msg.payload.readinput
+                var input = msg.payload.readinput;
                 if (input >= 0 && input <= 7) {
-                    var command = "$A2$0"+ slot +"$0"+ input ;
-                    UdpSender(command);
-                }else if (input == "all") { 
-                    var command = "$A0$0"+slot;
-                    UdpSender(command);
-                }else{
+                    var buffer = Buffer.from([0xA2, slothex, input]);
+                    UdpSender(buffer);
+                    setTimeout(function() { if (node.hub && node.hub.sendReadAll) node.hub.sendReadAll(); }, 20);
+                } else if (input == "all") { 
+                    var buffer = Buffer.from([0xA0, slothex]);
+                    UdpSender(buffer);
+                    setTimeout(function() { if (node.hub && node.hub.sendReadAll) node.hub.sendReadAll(); }, 20);
+                } else {
                     node.error("value not correct")
                 }
             }
@@ -35,7 +49,7 @@ module.exports = function (RED) {
         function UdpSender(command) {
             udpClient.send(command /*+ "\r"*/ ,node.hub.portout,'localhost',function(error){
                 if(error){
-                    client.close();
+                    udpClient.close();
                 }else{
                     console.log(command + ' sent');
                 }
@@ -44,6 +58,11 @@ module.exports = function (RED) {
 
         // Retrieve the hub node
         node.hub = RED.nodes.getNode(config.hub);
+        if (!node.hub) {
+            node.status({ fill: 'red', shape: 'ring', text: 'missing hub config' });
+            node.error('Missing hub configuration');
+            return;
+        }
 
         node.hub.on("status", function (status) {
             node.status(status);
@@ -52,24 +71,22 @@ module.exports = function (RED) {
         node.hub.on("evt_input", function (data) {
             try {
                 var outputMsgs = [];
-                //console.log(data.payload)
-                const message = data.payload.split("$")
-                if (parseInt(message[2].trim()) == slot) {     // straks vergelijken met het slotnummer wat is ingevuld in het dashbord
-                    if (message[1].trim() == "A1") {
-                        //console.log("all channels");
-                        for(let i = 0; i < 8; i++) {
-                            outputMsgs[i] = {payload: Boolean(parseInt(message[i+3])), topic: topic}
-                        }    
-                    } else if (message[1] == "A3 ") {
-                        //console.log("one channel");
-                        outputMsgs[parseInt(message[3])] = {payload: Boolean(parseInt(message[4])), topic: topic}
+                var payload = data.payload;
+                if (payload && payload.slot === slot) {
+                    if (payload.type === "A1") {
+                        for (let i = 0; i < payload.values.length; i++) {
+                            outputMsgs[i] = {
+                                payload: Boolean(payload.values[i]),
+                                topic: topic
+                            };
+                        }
+                    } else if (payload.type === "A3") {
+                        outputMsgs[payload.channel] = {
+                            payload: Boolean(payload.value),
+                            topic: topic
+                        };
                     }
-             
-                    var msg = {
-                        payload: data.payload
-                    };
-              
-                } 
+                }
                 node.send(outputMsgs);
             }   catch (error) {
                 node.error(error, data);
